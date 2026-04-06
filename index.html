@@ -157,18 +157,24 @@ textarea{resize:vertical;min-height:64px}
     <div class="login-logo-title">REPORTE DE SISTEMAS</div>
     <div class="login-logo-sub">Iniciá sesión para continuar</div>
   </div>
+
+  <!-- URL siempre visible -->
+  <div class="login-field">
+    <label>URL del sistema <span style="color:#f59e0b;font-size:9px;font-weight:700">REQUERIDA</span></label>
+    <div style="display:flex;gap:6px">
+      <input type="url" id="s-url" placeholder="https://script.google.com/macros/s/.../exec" style="font-size:11px"/>
+      <button onclick="saveSetupUrl()" style="background:var(--brand);color:#fff;border:none;padding:0 10px;border-radius:7px;cursor:pointer;font-size:11px;white-space:nowrap">Guardar</button>
+    </div>
+    <div id="url-status" style="font-size:10px;margin-top:3px;color:var(--text3)">Cargando...</div>
+  </div>
+
   <div class="login-field"><label>Usuario</label><input type="text" id="l-user" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('l-pass').focus()"/></div>
   <div class="login-field"><label>Contraseña</label><input type="password" id="l-pass" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"/></div>
   <div class="login-err" id="l-err"></div>
   <button class="login-btn" id="l-btn" onclick="doLogin()">Ingresar</button>
-  <div class="login-setup">
-    <a onclick="toggleSetup()">Configurar URL del sistema</a>
-    <div class="setup-row" id="setup-row" style="display:none">
-      <input type="url" id="s-url" placeholder="https://script.google.com/macros/s/.../exec"/>
-      <button onclick="saveSetupUrl()">Guardar</button>
-    </div>
-    <div style="margin-top:8px;font-size:10px;color:var(--text3)">Reporte de Sistemas v3.0</div>
-  </div>
+  <button onclick="testUrl()" style="width:100%;margin-top:8px;background:none;border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.5);padding:8px;border-radius:8px;cursor:pointer;font-size:12px">Probar conexión con el script</button>
+  <div id="test-result" style="font-size:11px;margin-top:8px;text-align:center;min-height:16px;word-break:break-all"></div>
+  <div style="margin-top:10px;font-size:10px;color:var(--text3);text-align:center">Reporte de Sistemas v3.0</div>
 </div>
 </div>
 
@@ -383,7 +389,7 @@ function saveData(){
   try{localStorage.setItem('rsis_reps',JSON.stringify(reps))}catch(e){}
   try{localStorage.setItem('rsis_cfg',JSON.stringify(cfg))}catch(e){}
 }
-function getAuthUrl(){return localStorage.getItem('rsis_authurl')||cfg.sheetsUrl||''}
+
 
 // ═══════════════════════════════════════════════════
 //  AUTH
@@ -408,17 +414,45 @@ async function api(body){
   }finally{clearTimeout(timer)}
 }
 
-function toggleSetup(){
-  const r=document.getElementById('setup-row');
-  r.style.display=r.style.display==='flex'?'none':'flex';
-}
+function toggleSetup(){}
 function saveSetupUrl(){
   const u=document.getElementById('s-url').value.trim();
-  if(!u)return;
+  if(!u){document.getElementById('url-status').textContent='⚠ Pegá la URL primero.';return}
   localStorage.setItem('rsis_authurl',u);
   cfg.sheetsUrl=u;saveData();
-  document.getElementById('setup-row').style.display='none';
-  toast('URL guardada. Ya podés iniciar sesión.');
+  updateUrlStatus();
+  toast('URL guardada');
+}
+function updateUrlStatus(){
+  const u=getUrl();
+  const el=document.getElementById('url-status');
+  const inp=document.getElementById('s-url');
+  if(!el)return;
+  if(u){
+    if(inp&&!inp.value)inp.value=u;
+    el.textContent='✓ URL guardada: '+u.slice(0,50)+'...';
+    el.style.color='#22c55e';
+  }else{
+    el.textContent='⚠ Sin URL — pegá la URL del Apps Script arriba y guardá.';
+    el.style.color='#f59e0b';
+  }
+}
+async function testUrl(){
+  const res=document.getElementById('test-result');
+  const url=getUrl();
+  if(!url){res.textContent='⚠ Primero guardá la URL.';res.style.color='#f59e0b';return}
+  res.textContent='Probando...';res.style.color='rgba(255,255,255,.4)';
+  try{
+    const controller=new AbortController();
+    setTimeout(()=>controller.abort(),10000);
+    const r=await fetch(url,{method:'GET',signal:controller.signal});
+    const text=await r.text();
+    res.textContent='Respuesta: '+text.slice(0,120);
+    res.style.color='#22c55e';
+  }catch(e){
+    res.textContent='Error: '+e.message;
+    res.style.color='#ef4444';
+  }
 }
 function checkSession(){
   loadData();
@@ -431,8 +465,7 @@ function checkSession(){
 function showLogin(){
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app').classList.remove('on');
-  const su=getAuthUrl();
-  if(su)document.getElementById('s-url').value=su;
+  updateUrlStatus();
 }
 
 function showApp(){
