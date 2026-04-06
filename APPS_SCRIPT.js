@@ -130,7 +130,7 @@ function getOrCreateUsuarios() {
     // Admin por defecto — SHA-256 de '3309_RES'
     // Cambialo desde Configuración → Usuarios una vez que entrés
     sh.appendRow(['Juan',
-      'b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4',
+      'b93eed4a03beb523d19a1926e0c951bcff333f577a8cd8d66e9e82eaad45bf2b',
       'admin']);
   }
   return sh;
