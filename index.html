@@ -402,17 +402,26 @@ async function sha256(str){
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 function getUrl(){return cfg.sheetsUrl||localStorage.getItem('rsis_authurl')||''}
-async function api(body){
+// GET para operaciones que necesitan respuesta (login, getUsers, etc.)
+async function apiGet(params){
   const url=getUrl();
   if(!url)throw new Error('URL no configurada');
+  const qs=new URLSearchParams(params).toString();
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),12000); // 12s timeout
+  const timer=setTimeout(()=>controller.abort(),15000);
   try{
-    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(body),signal:controller.signal});
+    const res=await fetch(url+'?'+qs,{signal:controller.signal});
     const text=await res.text();
-    try{return JSON.parse(text)}catch(e){throw new Error('Respuesta inválida: '+text.slice(0,100))}
+    try{return JSON.parse(text)}catch(e){throw new Error('Respuesta inválida: '+text.slice(0,120))}
   }finally{clearTimeout(timer)}
 }
+// POST no-cors para escrituras (reportes) — no leemos respuesta
+async function apiPost(body){
+  const url=getUrl();
+  if(!url)throw new Error('URL no configurada');
+  await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(body)});
+}
+async function api(body){return apiGet(body)}
 
 function toggleSetup(){}
 function saveSetupUrl(){
@@ -716,7 +725,7 @@ async function submitReport(){
   reps.unshift(rep);saveData();
   document.getElementById('hdr-sub').textContent=`${reps.length} reportes totales`;
   if(cfg.sheetsUrl){
-    try{await fetch(cfg.sheetsUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'report',...rep})});updateSyncDot('ok')}
+    try{await apiPost({action:'report',...rep});updateSyncDot('ok')}
     catch(e){updateSyncDot('err');console.warn('Sync error:',e)}
   }
   document.getElementById('btn-env').disabled=false;
@@ -795,7 +804,7 @@ async function renderUsersList(){
   if(!el)return;
   el.innerHTML='<div style="padding:12px;font-size:12px;color:var(--text3)">Cargando usuarios...</div>';
   try{
-    const data=await api({action:'getUsers'});
+    const data=await apiGet({action:'getUsers'});
     const users=data.users||[];
     el.innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
       <thead><tr>
@@ -825,7 +834,7 @@ async function addUser(){
   msg.textContent='Guardando...';msg.style.color='var(--text2)';
   try{
     const hash=await sha256(pass);
-    const data=await api({action:'addUser',user:name,hash,role});
+    const data=await apiGet({action:'addUser',user:name,hash,role});
     if(data.ok){
       document.getElementById('nu-name').value='';document.getElementById('nu-pass').value='';
       msg.textContent='✓ Usuario agregado correctamente.';msg.style.color='#22c55e';
@@ -840,7 +849,7 @@ async function addUser(){
 async function removeUser(user){
   if(!confirm('¿Eliminar el usuario "'+user+'"?'))return;
   try{
-    const data=await api({action:'deleteUser',user});
+    const data=await apiGet({action:'deleteUser',user});
     if(data.ok){toast('Usuario eliminado');renderUsersList();}
     else{toast('Error: '+(data.msg||'no se pudo eliminar'));}
   }catch(e){toast('Error de conexión')}
@@ -852,7 +861,7 @@ async function changePass(i){
   if(!newPass){return}
   try{
     const hash=await sha256(newPass);
-    const data=await api({action:'changePass',user:targetUser,hash});
+    const data=await apiGet({action:'changePass',user:targetUser,hash});
     if(data.ok){toast('Contraseña actualizada para '+targetUser);renderUsersList();}
     else{toast('Error: '+(data.msg||'no se pudo cambiar'));} 
   }catch(e){toast('Error de conexión')}
@@ -873,7 +882,7 @@ async function testSync(){
   if(!url){document.getElementById('cst').textContent='Ingresá la URL primero.';return}
   document.getElementById('cst').textContent='Probando conexión...';
   try{
-    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'test'})});
+    const res=await fetch(url+'?action=test');
     const data=await res.json();
     document.getElementById('cst').textContent=`✓ Conexión OK: ${JSON.stringify(data)}`;
     document.getElementById('cst').style.color='#22c55e';updateSyncDot('ok');
