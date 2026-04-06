@@ -402,26 +402,44 @@ async function sha256(str){
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 function getUrl(){return cfg.sheetsUrl||localStorage.getItem('rsis_authurl')||''}
-// GET para operaciones que necesitan respuesta (login, getUsers, etc.)
-async function apiGet(params){
-  const url=getUrl();
-  if(!url)throw new Error('URL no configurada');
-  const qs=new URLSearchParams(params).toString();
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),15000);
-  try{
-    const res=await fetch(url+'?'+qs,{signal:controller.signal});
-    const text=await res.text();
-    try{return JSON.parse(text)}catch(e){throw new Error('Respuesta inválida: '+text.slice(0,120))}
-  }finally{clearTimeout(timer)}
+// JSONP — única forma 100% confiable de leer respuestas de Apps Script sin CORS
+function jsonp(params, timeout=15000){
+  return new Promise((resolve,reject)=>{
+    const cbName='_cb'+Date.now()+Math.floor(Math.random()*9999);
+    const url=getUrl();
+    if(!url){reject(new Error('URL no configurada'));return}
+    const timer=setTimeout(()=>{
+      delete window[cbName];
+      document.getElementById(cbName)?.remove();
+      reject(new Error('Tiempo agotado — verificá que el script esté deployado'));
+    },timeout);
+    window[cbName]=function(data){
+      clearTimeout(timer);
+      delete window[cbName];
+      document.getElementById(cbName)?.remove();
+      resolve(data);
+    };
+    const qs=new URLSearchParams({...params,callback:cbName}).toString();
+    const s=document.createElement('script');
+    s.id=cbName;
+    s.src=url+'?'+qs;
+    s.onerror=()=>{
+      clearTimeout(timer);
+      delete window[cbName];
+      s.remove();
+      reject(new Error('Error cargando script — verificá la URL'));
+    };
+    document.head.appendChild(s);
+  });
 }
-// POST no-cors para escrituras (reportes) — no leemos respuesta
+// Alias para compatibilidad
+async function apiGet(params){return jsonp(params)}
+// POST no-cors para escrituras (no necesitamos leer la respuesta)
 async function apiPost(body){
   const url=getUrl();
   if(!url)throw new Error('URL no configurada');
   await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(body)});
 }
-async function api(body){return apiGet(body)}
 
 function toggleSetup(){}
 function saveSetupUrl(){
