@@ -406,14 +406,14 @@
     }
 
     // ─── Autocomplete Field ─────────────────────────────────
-    function AutoField({ value, onChange, suggestions, placeholder, label, required }) {
+    function AutoField({ value, onChange, suggestions, placeholder }) {
       const [open, setOpen] = useState(false);
       const [inputVal, setInputVal] = useState(value || "");
 
       useEffect(() => { setInputVal(value || ""); }, [value]);
 
-      const filtered = suggestions.filter(s => norm(s).includes(norm(inputVal)));
-      const showList = open && inputVal && filtered.length > 0;
+      const filtered = inputVal ? suggestions.filter(s => norm(s).includes(norm(inputVal))) : suggestions;
+      const showList = open && filtered.length > 0;
       const showNoMatch = open && inputVal && filtered.length === 0 && suggestions.length > 0;
 
       return (
@@ -424,8 +424,9 @@
             onBlur={() => setTimeout(() => setOpen(false), 200)}
             placeholder={placeholder} style={S.inp}/>
           {showList && <div style={S.dropdown}>
-            {filtered.slice(0,8).map(s => (
-              <div key={s} style={S.ddItem} onMouseDown={() => { setInputVal(s); onChange(s); setOpen(false); }}>{s}</div>
+            {filtered.slice(0,10).map(s => (
+              <div key={s} style={{...S.ddItem, background: s === inputVal ? "#334155" : "transparent", fontWeight: s === inputVal ? 600 : 400}}
+                onMouseDown={() => { setInputVal(s); onChange(s); setOpen(false); }}>{s}</div>
             ))}
           </div>}
           {showNoMatch && <div style={S.dropdown}>
