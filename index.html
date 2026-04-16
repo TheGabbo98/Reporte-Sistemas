@@ -64,6 +64,23 @@
       return { bg: "rgba(239,68,68,0.15)", border: "#dc2626", text: "#f87171" };                  // rojo
     };
 
+    // ─── Airtable name mapping ─────────────────────────────
+    // Nombre del sistema → nombre exacto en Airtable (Single Select)
+    // Si Airtable rechaza un nombre, ajustá los valores acá
+    const TECH_AIRTABLE = {
+      "Gabriel": "Gabriel",
+      "Pablo": "Pablo Collaud",
+      "Tomas": "Tomas Locarnini",
+      "Jhoan": "Jhoan Rebolledo",
+      "Juan": "Juan"
+    };
+    // Reversa: nombre de Airtable → nombre corto del sistema
+    const toShort = (fullName) => {
+      for (const k in TECH_AIRTABLE) { if (TECH_AIRTABLE[k] === fullName) return k; }
+      return fullName;
+    };
+    const toFull = (shortName) => TECH_AIRTABLE[shortName] || shortName;
+
     // ─── LocalStorage Helper ─────────────────────────────────
     const ps = {
       get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
@@ -136,7 +153,7 @@
     };
 
     // ─── API URL (hardcoded) ────────────────────────────────
-    const API_URL = "https://script.google.com/macros/s/AKfycbw6HLlgaOIORQ9FvZ25_bPjgt88gr_oEfs_eDw81Qt640kM1WtHWMK7Ce2WFrz1qdj5gg/exec";
+    const API_URL = "https://script.google.com/macros/s/AKfycbwGKAnCeVycPFSDiatuK-3-_aDAknw60DK2NWaq4BOA2owFzy4XnE7jn4-YZoUUVfM5Ng/exec";
 
     // ─── Main App ────────────────────────────────────────────
     function App() {
@@ -190,8 +207,9 @@
         // Reclamos Posnet (Airtable) - también por separado
         try {
           const [rp, ra] = await Promise.all([api.getReclamosProgreso(), api.getReclamosAll()]);
-          if (rp.success) setReclamosProgreso(rp.data || []);
-          if (ra.success) setReclamosAll(ra.data || []);
+          const addShort = (arr) => (arr || []).map(r => ({...r, asignadoShort: toShort(r.asignado)}));
+          if (rp.success) setReclamosProgreso(addShort(rp.data));
+          if (ra.success) setReclamosAll(addShort(ra.data));
         } catch (e) { console.warn("Error cargando reclamos:", e); }
         setSyncing(false);
       };
@@ -355,8 +373,14 @@
         return Object.entries(c).map(function(e){ return {nombre:e[0],count:e[1]}; }).sort((a,b) => b.count - a.count).slice(0,10);
       }, [viewData]);
 
+      const motivoStats = useMemo(() => {
+        const c = _.countBy(viewData, "motivo");
+        return Object.entries(c).map(function(e){ return {motivo:e[0],count:e[1]}; }).sort((a,b) => b.count - a.count).slice(0,10);
+      }, [viewData]);
+
       const maxT = Math.max(...tipoStats.map(t => t.count), 1);
       const maxL = Math.max(...localStats.map(l => l.count), 1);
+      const maxM = Math.max(...motivoStats.map(m => m.count), 1);
 
       const toggleStyle = (active) => ({
         padding:"7px 16px", borderRadius:7, border:"none", cursor:"pointer", fontSize:12, fontWeight:600,
@@ -392,7 +416,10 @@
           </div>
 
           {/* Resumen Reclamos Posnet */}
-          {reclamosProgreso && reclamosProgreso.length > 0 && <ReclamosSummaryCard reclamosProgreso={reclamosProgreso} onNavigate={onNavigate}/>}
+          {(() => {
+            const misReclamos = isAdmin ? reclamosProgreso : reclamosProgreso.filter(r => r.asignadoShort === currentUser.nombre);
+            return misReclamos && misReclamos.length > 0 && <ReclamosSummaryCard reclamosProgreso={misReclamos} onNavigate={onNavigate}/>;
+          })()}
 
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
             <div style={S.card}>
@@ -424,6 +451,24 @@
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+
+          {/* Motivos más repetidos */}
+          <div style={{...S.card,marginBottom:16}}>
+            <h3 style={S.cardTitle}>Motivos más repetidos</h3>
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
+              {motivoStats.length===0 && <p style={{color:"#475569",fontSize:13}}>Sin datos</p>}
+              {motivoStats.map((m,i) => (
+                <div key={m.motivo} style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:22,height:22,borderRadius:6,background:i<3?"#b45309":"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:i<3?"#fff":"#64748b",flexShrink:0}}>{i+1}</div>
+                  <div style={{width:200,fontSize:12,color:"#cbd5e1",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={m.motivo}>{m.motivo}</div>
+                  <div style={{flex:1,background:"#0f172a",borderRadius:6,height:22,position:"relative",overflow:"hidden"}}>
+                    <div style={{width:(m.count/maxM)*100+"%",height:"100%",background:"linear-gradient(90deg,#b45309,#fbbf24)",borderRadius:6,transition:"width .6s ease",minWidth:m.count>0?18:0}}/>
+                    <span style={{position:"absolute",right:6,top:3,fontSize:10,fontWeight:700,color:"#fff"}}>{m.count}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -870,6 +915,9 @@
       const [dLocal, setDLocal] = useState("");
       const [dFrom, setDFrom] = useState("");
       const [dTo, setDTo] = useState("");
+      const [dMes, setDMes] = useState("");
+      const [sortCol, setSortCol] = useState("fechaInicio");
+      const [sortDir, setSortDir] = useState("desc");
 
       // Técnicos únicos
       const techs = [...new Set(reclamosProgreso.map(r => r.asignadoShort).filter(Boolean))].sort();
@@ -889,11 +937,12 @@
         return reclamosAll.filter(r => {
           if (dLocal && r.local !== dLocal) return false;
           const d = (r.fechaInicio || "").slice(0,10);
+          if (dMes && !d.startsWith(dMes)) return false;
           if (dFrom && d < dFrom) return false;
           if (dTo && d > dTo) return false;
           return true;
         });
-      }, [reclamosAll, dLocal, dFrom, dTo]);
+      }, [reclamosAll, dLocal, dMes, dFrom, dTo]);
 
       const localMasReclamos = useMemo(() => {
         const c = _.countBy(dashData, "local");
@@ -997,10 +1046,11 @@
             <>
               {/* Filtros dashboard */}
               <div style={{...S.card,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end",marginBottom:16}}>
+                <FG l="Mes"><input type="month" value={dMes} onChange={e=>{setDMes(e.target.value);setDFrom("");setDTo("");}} style={S.fInp}/></FG>
                 <FG l="Local"><select value={dLocal} onChange={e=>setDLocal(e.target.value)} style={S.fInp}><option value="">Todos</option>{[...new Set(reclamosAll.map(r=>r.local).filter(Boolean))].sort().map(l=><option key={l} value={l}>{l}</option>)}</select></FG>
-                <FG l="Desde"><input type="date" value={dFrom} onChange={e=>setDFrom(e.target.value)} style={S.fInp}/></FG>
-                <FG l="Hasta"><input type="date" value={dTo} onChange={e=>setDTo(e.target.value)} style={S.fInp}/></FG>
-                {(dLocal||dFrom||dTo) && <button onClick={()=>{setDLocal("");setDFrom("");setDTo("");}} style={{...S.fInp,cursor:"pointer",background:"#1e293b",color:"#f87171",border:"1px solid #334155",padding:"6px 12px",marginTop:18}}>✕ Limpiar</button>}
+                <FG l="Desde"><input type="date" value={dFrom} onChange={e=>{setDFrom(e.target.value);setDMes("");}} style={S.fInp}/></FG>
+                <FG l="Hasta"><input type="date" value={dTo} onChange={e=>{setDTo(e.target.value);setDMes("");}} style={S.fInp}/></FG>
+                {(dLocal||dFrom||dTo||dMes) && <button onClick={()=>{setDLocal("");setDFrom("");setDTo("");setDMes("");}} style={{...S.fInp,cursor:"pointer",background:"#1e293b",color:"#f87171",border:"1px solid #334155",padding:"6px 12px",marginTop:18}}>✕ Limpiar</button>}
               </div>
 
               {/* KPIs */}
@@ -1067,21 +1117,41 @@
                 <div style={{...S.card,padding:0,overflow:"auto"}}>
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
                     <thead><tr>
-                      {["ESTADO","LOCAL","CAJA","MOTIVO","ASIGNADO","FECHA INICIO","RESOLUCIÓN","N°"].map(h=><th key={h} style={S.th}>{h}</th>)}
+                      {[
+                        {key:"estado",label:"ESTADO"},{key:"local",label:"LOCAL"},{key:"caja",label:"CAJA"},
+                        {key:"motivo",label:"MOTIVO"},{key:"asignado",label:"ASIGNADO"},
+                        {key:"fechaInicio",label:"FECHA INICIO"},{key:"fechaResolucion",label:"RESOLUCIÓN"},{key:"nroReclamo",label:"N°"}
+                      ].map(col=>(
+                        <th key={col.key} style={{...S.th,cursor:"pointer",userSelect:"none"}} onClick={()=>{
+                          if (sortCol===col.key) setSortDir(sortDir==="asc"?"desc":"asc");
+                          else { setSortCol(col.key); setSortDir("asc"); }
+                        }}>
+                          {col.label} {sortCol===col.key ? (sortDir==="asc"?"▲":"▼") : ""}
+                        </th>
+                      ))}
                     </tr></thead>
                     <tbody>
-                      {dashData.slice(0,100).map(r => (
-                        <tr key={r.id} style={{borderBottom:"1px solid rgba(51,65,85,0.4)"}}>
-                          <td style={S.td}><span style={{...S.badge,background:r.estado==="Resuelto"?"#16a34a":"#d97706"}}>{r.estado}</span></td>
-                          <td style={S.td}>{r.local}</td>
-                          <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.caja || "—"}</td>
-                          <td style={{...S.td,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.motivo}</td>
-                          <td style={S.td}>{r.asignadoShort || r.asignado}</td>
-                          <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.fechaInicio}</td>
-                          <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:r.fechaResolucion?"#34d399":"#475569"}}>{r.fechaResolucion || "—"}</td>
-                          <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.nroReclamo || "—"}</td>
-                        </tr>
-                      ))}
+                      {(() => {
+                        const sorted = [...dashData].sort((a,b) => {
+                          const va = (a[sortCol]||"").toString().toLowerCase();
+                          const vb = (b[sortCol]||"").toString().toLowerCase();
+                          if (va < vb) return sortDir==="asc"?-1:1;
+                          if (va > vb) return sortDir==="asc"?1:-1;
+                          return 0;
+                        });
+                        return sorted.slice(0,100).map(r => (
+                          <tr key={r.id} style={{borderBottom:"1px solid rgba(51,65,85,0.4)"}}>
+                            <td style={S.td}><span style={{...S.badge,background:r.estado==="Resuelto"?"#16a34a":"#d97706"}}>{r.estado}</span></td>
+                            <td style={S.td}>{r.local}</td>
+                            <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.caja || "—"}</td>
+                            <td style={{...S.td,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.motivo}</td>
+                            <td style={S.td}>{r.asignadoShort || r.asignado}</td>
+                            <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.fechaInicio}</td>
+                            <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:r.fechaResolucion?"#34d399":"#475569"}}>{r.fechaResolucion || "—"}</td>
+                            <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.nroReclamo || "—"}</td>
+                          </tr>
+                        ));
+                      })()}
                       {dashData.length === 0 && <tr><td colSpan={8} style={{...S.td,textAlign:"center",color:"#475569",padding:40}}>Sin reclamos</td></tr>}
                     </tbody>
                   </table>
@@ -1111,7 +1181,7 @@
 
     // ─── Nuevo Reclamo Modal ─────────────────────────────────
     function NewReclamoModal({ api, locals, user, onClose, onSuccess, showToast }) {
-      const [form, setForm] = useState({ local: "", motivo: "", caja: "", nroReclamo: "" });
+      const [form, setForm] = useState({ local: "", motivo: "", caja: "", nroReclamo: "", asignado: toFull(user.nombre) });
       const [searchLocal, setSearchLocal] = useState("");
       const [showDrop, setShowDrop] = useState(false);
       const [busy, setBusy] = useState(false);
@@ -1119,7 +1189,7 @@
       const fl = locals.filter(l => l.activo !== false && norm(l.nombre).includes(norm(searchLocal)));
 
       const handleSubmit = async () => {
-        if (!form.local || !form.motivo) { showToast("Completá Local y Motivo","error"); return; }
+        if (!form.local || !form.motivo || !form.nroReclamo) { showToast("Completá Local, Motivo y N° Reclamo","error"); return; }
         setBusy(true);
         try {
           const res = await api.createReclamo(form, user.nombre);
@@ -1156,6 +1226,10 @@
 
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
             <div>
+              <label style={S.formLbl}>N° Reclamo <span style={{color:"#f87171"}}>*</span></label>
+              <input value={form.nroReclamo} onChange={e=>setForm({...form,nroReclamo:e.target.value})} placeholder="Ej: 12345" style={S.inp}/>
+            </div>
+            <div>
               <label style={S.formLbl}>Caja <span style={{color:"#64748b",fontWeight:400}}>(opcional)</span></label>
               <select value={form.caja} onChange={e=>setForm({...form,caja:e.target.value})} style={{...S.inp,fontSize:14,padding:"10px 13px"}}>
                 <option value="">—</option>
@@ -1164,14 +1238,10 @@
                 <option value="CAJA 3">CAJA 3</option>
               </select>
             </div>
-            <div>
-              <label style={S.formLbl}>N° Reclamo <span style={{color:"#64748b",fontWeight:400}}>(opcional)</span></label>
-              <input value={form.nroReclamo} onChange={e=>setForm({...form,nroReclamo:e.target.value})} placeholder="Ej: 12345" style={S.inp}/>
-            </div>
           </div>
 
           <div style={{marginBottom:18}}>
-            <div style={S.chip}><I n="users" s={14} c="#64748b"/> Asignado a: <strong style={{color:"#e2e8f0",marginLeft:4}}>{user.nombre}</strong></div>
+            <div style={S.chip}><I n="users" s={14} c="#64748b"/> Asignado a: <strong style={{color:"#e2e8f0",marginLeft:4}}>{form.asignado}</strong></div>
           </div>
 
           <div style={{display:"flex",gap:10}}>
