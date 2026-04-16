@@ -49,6 +49,21 @@
     // ─── Normalize (remove accents for search) ────────────────
     const norm = (s) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
+    // Calcular días desde una fecha
+    const daysSince = (dateStr) => {
+      if (!dateStr) return 0;
+      const d = new Date(dateStr);
+      const now = new Date();
+      return Math.floor((now - d) / (1000 * 60 * 60 * 24));
+    };
+
+    // Color según antigüedad
+    const ageColor = (days) => {
+      if (days <= 3) return { bg: "rgba(34,197,94,0.15)", border: "#16a34a", text: "#34d399" };   // verde
+      if (days <= 6) return { bg: "rgba(245,158,11,0.15)", border: "#d97706", text: "#fbbf24" };  // naranja
+      return { bg: "rgba(239,68,68,0.15)", border: "#dc2626", text: "#f87171" };                  // rojo
+    };
+
     // ─── LocalStorage Helper ─────────────────────────────────
     const ps = {
       get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
@@ -79,6 +94,10 @@
         getLocales: () => get({ action: "getLocales" }),
         getUsuarios: () => get({ action: "getUsuarios" }),
         getCatalogo: () => get({ action: "getCatalogo" }),
+        getReclamosProgreso: () => get({ action: "getReclamosProgreso" }),
+        getReclamosAll: () => get({ action: "getReclamosAll" }),
+        createReclamo: (data, userName) => post({ action: "createReclamo", data, userName }),
+        resolveReclamo: (id) => post({ action: "resolveReclamo", id }),
         addReport: (data) => post({ action: "addReport", data }),
         deleteReport: (id, userRole, userName) => post({ action: "deleteReport", id, userRole, userName }),
         addLocal: (data) => post({ action: "addLocal", data }),
@@ -110,6 +129,8 @@
         refresh: "M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z",
         link: "M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z",
         key: "M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z",
+        card: "M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z",
+        alert: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z",
       };
       return <svg width={s} height={s} viewBox="0 0 24 24" fill={c}>{paths[n] && <path d={paths[n]}/>}</svg>;
     };
@@ -128,6 +149,8 @@
       const [locals, setLocals] = useState([]);
       const [users, setUsers] = useState([]);
       const [catalogo, setCatalogo] = useState([]);
+      const [reclamosProgreso, setReclamosProgreso] = useState([]);
+      const [reclamosAll, setReclamosAll] = useState([]);
       const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
       const [toast, setToast] = useState(null);
       const [syncing, setSyncing] = useState(false);
@@ -153,12 +176,23 @@
         if (!api) return;
         setSyncing(true);
         try {
-          const [rR, lR, uR, cR] = await Promise.all([api.getReports(), api.getLocales(), api.getUsuarios(), api.getCatalogo()]);
+          const [rR, lR, uR] = await Promise.all([api.getReports(), api.getLocales(), api.getUsuarios()]);
           if (rR.success) setReports(rR.data || []);
           if (lR.success) setLocals(lR.data || []);
           if (uR.success) setUsers(uR.data || []);
-          if (cR.success) setCatalogo(cR.data || []);
         } catch (e) { showToast("Error de conexión con la API", "error"); console.error(e); }
+        // Catálogo se carga por separado para no romper lo demás si falla
+        try {
+          const cR = await api.getCatalogo();
+          if (cR.success) setCatalogo(cR.data || []);
+          else console.warn("Catálogo no disponible:", cR.error);
+        } catch (e) { console.warn("Error cargando catálogo:", e); }
+        // Reclamos Posnet (Airtable) - también por separado
+        try {
+          const [rp, ra] = await Promise.all([api.getReclamosProgreso(), api.getReclamosAll()]);
+          if (rp.success) setReclamosProgreso(rp.data || []);
+          if (ra.success) setReclamosAll(ra.data || []);
+        } catch (e) { console.warn("Error cargando reclamos:", e); }
         setSyncing(false);
       };
 
@@ -179,6 +213,7 @@
         { id: "dashboard", label: "Dashboard", icon: "dashboard" },
         { id: "nuevo", label: "Nuevo Reporte", icon: "add" },
         { id: "historial", label: "Historial", icon: "list" },
+        { id: "reclamos", label: "Reclamos Posnet", icon: "card" },
         { id: "locales", label: "Locales", icon: "store" },
         ...(isAdmin ? [{ id: "usuarios", label: "Usuarios", icon: "users" }] : []),
       ];
@@ -221,9 +256,10 @@
 
           <main style={{...S.main, marginLeft: sidebarOpen ? 256 : 68}}>
             {syncing && <div style={S.syncBar}/>}
-            {page === "dashboard" && <DashboardPage reports={reports} locals={locals} users={users} isAdmin={isAdmin} currentUser={user}/>}
-            {page === "nuevo" && <NewReportPage api={api} locals={locals} catalogo={catalogo} user={user} onSuccess={() => { refreshData(); showToast("Reporte cargado"); }} showToast={showToast}/>}
+            {page === "dashboard" && <DashboardPage reports={reports} locals={locals} users={users} reclamosProgreso={reclamosProgreso} isAdmin={isAdmin} currentUser={user} onNavigate={setPage}/>}
+            {page === "nuevo" && <NewReportPage api={api} locals={locals} catalogo={catalogo} reclamosProgreso={reclamosProgreso} user={user} isAdmin={isAdmin} onSuccess={() => { refreshData(); showToast("Reporte cargado"); }} showToast={showToast}/>}
             {page === "historial" && <HistoryPage api={api} reports={reports} locals={locals} isAdmin={isAdmin} userRole={user.role} currentUser={user} onRefresh={refreshData} showToast={showToast}/>}
+            {page === "reclamos" && <ReclamosPage api={api} reclamosProgreso={reclamosProgreso} reclamosAll={reclamosAll} locals={locals} user={user} isAdmin={isAdmin} onRefresh={refreshData} showToast={showToast}/>}
             {page === "locales" && <LocalesPage api={api} locals={locals} isAdmin={isAdmin} userRole={user.role} onRefresh={refreshData} showToast={showToast}/>}
             {page === "usuarios" && isAdmin && <UsersPage api={api} users={users} userRole={user.role} onRefresh={refreshData} showToast={showToast}/>}
           </main>
@@ -271,7 +307,7 @@
     }
 
     // ─── Dashboard ───────────────────────────────────────────
-    function DashboardPage({ reports, locals, users, isAdmin, currentUser }) {
+    function DashboardPage({ reports, locals, users, reclamosProgreso, isAdmin, currentUser, onNavigate }) {
       const [mesFilter, setMesFilter] = useState(() => {
         const n = new Date(); return n.getFullYear() + "-" + String(n.getMonth()+1).padStart(2,"0");
       });
@@ -355,6 +391,9 @@
             <KPI border="#d97706" label="Local con más reclamos" value={localMasReclamos?.local || "—"} valueSize={20} sub2={localMasReclamos ? localMasReclamos.count + " rep · Top: " + localMasReclamos.topFalla + " (" + localMasReclamos.topFallaCount + ")" : ""}/>
           </div>
 
+          {/* Resumen Reclamos Posnet */}
+          {reclamosProgreso && reclamosProgreso.length > 0 && <ReclamosSummaryCard reclamosProgreso={reclamosProgreso} onNavigate={onNavigate}/>}
+
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
             <div style={S.card}>
               <h3 style={S.cardTitle}>Reportes por Tipo</h3>
@@ -437,7 +476,7 @@
     }
 
     // ─── New Report ──────────────────────────────────────────
-    function NewReportPage({ api, locals, catalogo, user, onSuccess, showToast }) {
+    function NewReportPage({ api, locals, catalogo, reclamosProgreso, user, isAdmin, onSuccess, showToast }) {
       const now = new Date();
       const todayStr = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0") + "-" + String(now.getDate()).padStart(2,"0");
       const nowTime = String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0");
@@ -492,6 +531,9 @@
         <div style={S.page}>
           <h1 style={S.pageTitle}>Nuevo Reporte</h1>
           <p style={S.pageSub}>Cargá un nuevo reporte de sistemas</p>
+
+          {/* Banner de reclamos pendientes para técnicos */}
+          {!isAdmin && <TechReclamosBanner reclamosProgreso={reclamosProgreso} user={user}/>}
           <div style={{...S.card, maxWidth:680, marginTop:20}}>
             {/* Local */}
             <div style={{marginBottom:18}}>
@@ -740,6 +782,404 @@
         <button onClick={()=>onSave(f)} style={S.btnPrimary2}><I n="check" s={15}/></button>
         <button onClick={onCancel} style={S.btnSecondary}><I n="close" s={15}/></button>
       </div>);
+    }
+
+    // ─── Reclamos Banner (para técnicos en Nuevo Reporte) ────
+    function TechReclamosBanner({ reclamosProgreso, user }) {
+      const mios = reclamosProgreso.filter(r => r.asignadoShort === user.nombre);
+      if (mios.length === 0) return null;
+
+      // Ordenar por días (más viejos primero)
+      const sorted = [...mios].sort((a, b) => daysSince(b.fechaInicio) - daysSince(a.fechaInicio));
+
+      return (
+        <div style={{background:"rgba(124,58,237,0.1)",border:"1px solid rgba(124,58,237,0.3)",borderRadius:12,padding:16,marginTop:14,marginBottom:4}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+            <I n="alert" s={20} c="#a78bfa"/>
+            <strong style={{color:"#e2e8f0",fontSize:14}}>Tenés {mios.length} {mios.length === 1 ? "reclamo pendiente" : "reclamos pendientes"} de Posnet</strong>
+            <span style={{color:"#64748b",fontSize:12,marginLeft:"auto"}}>Consultá al local antes de cargar</span>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {sorted.slice(0,5).map(r => {
+              const dias = daysSince(r.fechaInicio);
+              const c = ageColor(dias);
+              return (
+                <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:c.bg,borderLeft:"3px solid "+c.border,borderRadius:6}}>
+                  <span style={{color:c.text,fontSize:11,fontWeight:700,minWidth:56}}>{dias}d</span>
+                  <span style={{color:"#e2e8f0",fontSize:13,fontWeight:600,minWidth:100}}>{r.local}</span>
+                  <span style={{color:"#94a3b8",fontSize:12,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.motivo}</span>
+                  {r.caja && <span style={{color:"#64748b",fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>{r.caja}</span>}
+                  {r.nroReclamo && <span style={{color:"#a78bfa",fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>#{r.nroReclamo}</span>}
+                </div>
+              );
+            })}
+            {sorted.length > 5 && <div style={{color:"#64748b",fontSize:11,textAlign:"center",marginTop:4}}>+ {sorted.length - 5} más en la sección Reclamos Posnet</div>}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Reclamos Summary Card (para el Dashboard) ───────────
+    function ReclamosSummaryCard({ reclamosProgreso, onNavigate }) {
+      const total = reclamosProgreso.length;
+      const rojos = reclamosProgreso.filter(r => daysSince(r.fechaInicio) > 6).length;
+      const naranjas = reclamosProgreso.filter(r => { const d = daysSince(r.fechaInicio); return d >= 4 && d <= 6; }).length;
+      const verdes = total - rojos - naranjas;
+
+      return (
+        <div style={{...S.card,marginBottom:16,cursor:"pointer"}} onClick={() => onNavigate && onNavigate("reclamos")}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+            <h3 style={S.cardTitle}>Reclamos Posnet en Progreso</h3>
+            <span style={{color:"#a78bfa",fontSize:12,fontWeight:600}}>Ver todos →</span>
+          </div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:120,background:"#0f172a",borderRadius:10,padding:"14px 18px",borderTop:"3px solid #7c3aed"}}>
+              <div style={{color:"#64748b",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>Total</div>
+              <div style={{color:"#f1f5f9",fontSize:30,fontWeight:800,marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{total}</div>
+            </div>
+            <div style={{flex:1,minWidth:120,background:"#0f172a",borderRadius:10,padding:"14px 18px",borderTop:"3px solid #16a34a"}}>
+              <div style={{color:"#64748b",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>1-3 días</div>
+              <div style={{color:"#34d399",fontSize:30,fontWeight:800,marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{verdes}</div>
+            </div>
+            <div style={{flex:1,minWidth:120,background:"#0f172a",borderRadius:10,padding:"14px 18px",borderTop:"3px solid #d97706"}}>
+              <div style={{color:"#64748b",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>4-6 días</div>
+              <div style={{color:"#fbbf24",fontSize:30,fontWeight:800,marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{naranjas}</div>
+            </div>
+            <div style={{flex:1,minWidth:120,background:"#0f172a",borderRadius:10,padding:"14px 18px",borderTop:"3px solid #dc2626"}}>
+              <div style={{color:"#64748b",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:.5}}>7+ días</div>
+              <div style={{color:"#f87171",fontSize:30,fontWeight:800,marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{rojos}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Reclamos Posnet Page ────────────────────────────────
+    function ReclamosPage({ api, reclamosProgreso, reclamosAll, locals, user, isAdmin, onRefresh, showToast }) {
+      const [tab, setTab] = useState("progreso"); // progreso | dashboard
+      const [showNew, setShowNew] = useState(false);
+      const [confirmResolve, setConfirmResolve] = useState(null);
+      const [busy, setBusy] = useState(false);
+
+      // Filtros para En Progreso
+      const [fLocalP, setFLocalP] = useState("");
+      const [fTechP, setFTechP] = useState("");
+      const [searchP, setSearchP] = useState("");
+
+      // Filtros para Dashboard
+      const [dLocal, setDLocal] = useState("");
+      const [dFrom, setDFrom] = useState("");
+      const [dTo, setDTo] = useState("");
+
+      // Técnicos únicos
+      const techs = [...new Set(reclamosProgreso.map(r => r.asignadoShort).filter(Boolean))].sort();
+
+      // Filtrado de progreso
+      const progresoFiltrado = useMemo(() => {
+        return reclamosProgreso.filter(r => {
+          if (fLocalP && r.local !== fLocalP) return false;
+          if (fTechP && r.asignadoShort !== fTechP) return false;
+          if (searchP) { const s = norm(searchP); return norm(r.motivo).includes(s) || norm(r.local).includes(s) || norm(r.nroReclamo).includes(s); }
+          return true;
+        }).sort((a,b) => daysSince(b.fechaInicio) - daysSince(a.fechaInicio));
+      }, [reclamosProgreso, fLocalP, fTechP, searchP]);
+
+      // Dashboard - data filtrada
+      const dashData = useMemo(() => {
+        return reclamosAll.filter(r => {
+          if (dLocal && r.local !== dLocal) return false;
+          const d = (r.fechaInicio || "").slice(0,10);
+          if (dFrom && d < dFrom) return false;
+          if (dTo && d > dTo) return false;
+          return true;
+        });
+      }, [reclamosAll, dLocal, dFrom, dTo]);
+
+      const localMasReclamos = useMemo(() => {
+        const c = _.countBy(dashData, "local");
+        return Object.entries(c).map(function(e){return {nombre:e[0],count:e[1]};}).sort((a,b) => b.count - a.count).slice(0,10);
+      }, [dashData]);
+
+      const motivoMasRepetido = useMemo(() => {
+        const c = _.countBy(dashData, "motivo");
+        return Object.entries(c).map(function(e){return {motivo:e[0],count:e[1]};}).sort((a,b) => b.count - a.count).slice(0,10);
+      }, [dashData]);
+
+      const techStats = useMemo(() => {
+        const c = _.countBy(dashData, "asignadoShort");
+        return Object.entries(c).map(function(e){return {nombre:e[0],count:e[1]};}).sort((a,b) => b.count - a.count);
+      }, [dashData]);
+
+      const maxLocal = Math.max(...localMasReclamos.map(l => l.count), 1);
+      const maxMotivo = Math.max(...motivoMasRepetido.map(m => m.count), 1);
+
+      const totalEnProgreso = dashData.filter(r => r.estado === "En Progreso").length;
+      const totalResueltos = dashData.filter(r => r.estado === "Resuelto").length;
+
+      const handleResolve = async () => {
+        if (!confirmResolve) return;
+        setBusy(true);
+        try {
+          const res = await api.resolveReclamo(confirmResolve.id);
+          if (res.success) { showToast("Reclamo resuelto"); onRefresh(); }
+          else showToast(res.error || "Error","error");
+        } catch { showToast("Error de conexión","error"); }
+        setConfirmResolve(null); setBusy(false);
+      };
+
+      const tabStyle = (active) => ({
+        padding:"9px 18px", borderRadius:8, border:"none", cursor:"pointer", fontSize:13, fontWeight:600,
+        fontFamily:"'Outfit',sans-serif", transition:"all .2s",
+        background: active ? "#7c3aed" : "transparent", color: active ? "#fff" : "#64748b"
+      });
+
+      return (
+        <div style={S.page}>
+          <div style={S.pageHead}>
+            <div>
+              <h1 style={S.pageTitle}>Reclamos Posnet</h1>
+              <p style={S.pageSub}>{tab === "progreso" ? `${progresoFiltrado.length} reclamos en progreso` : "Dashboard y estadísticas"}</p>
+            </div>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <button onClick={() => setShowNew(true)} style={S.btnPrimary2}><I n="add" s={16}/> Nuevo Reclamo</button>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div style={{background:"#1e293b",borderRadius:10,padding:4,display:"flex",gap:2,marginBottom:16,border:"1px solid #334155",width:"fit-content"}}>
+            <button onClick={()=>setTab("progreso")} style={tabStyle(tab==="progreso")}>En Progreso</button>
+            <button onClick={()=>setTab("dashboard")} style={tabStyle(tab==="dashboard")}>Dashboard</button>
+          </div>
+
+          {tab === "progreso" && (
+            <>
+              {/* Filtros */}
+              <div style={{...S.card,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end",marginBottom:16}}>
+                <FG l="Buscar"><input value={searchP} onChange={e=>setSearchP(e.target.value)} placeholder="Motivo, local, N°..." style={{...S.fInp,width:200}}/></FG>
+                <FG l="Local"><select value={fLocalP} onChange={e=>setFLocalP(e.target.value)} style={S.fInp}><option value="">Todos</option>{[...new Set(reclamosProgreso.map(r=>r.local))].sort().map(l=><option key={l} value={l}>{l}</option>)}</select></FG>
+                {isAdmin && <FG l="Asignado"><select value={fTechP} onChange={e=>setFTechP(e.target.value)} style={S.fInp}><option value="">Todos</option>{techs.map(t=><option key={t} value={t}>{t}</option>)}</select></FG>}
+              </div>
+
+              {/* Leyenda */}
+              <div style={{display:"flex",gap:14,marginBottom:14,fontSize:11,color:"#94a3b8",flexWrap:"wrap"}}>
+                <span><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:"#16a34a",marginRight:6}}/>1-3 días</span>
+                <span><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:"#d97706",marginRight:6}}/>4-6 días</span>
+                <span><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:"#dc2626",marginRight:6}}/>7+ días</span>
+              </div>
+
+              {/* Lista de reclamos */}
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {progresoFiltrado.length === 0 && <div style={{...S.card,textAlign:"center",color:"#475569",padding:40}}>No hay reclamos en progreso</div>}
+                {progresoFiltrado.map(r => {
+                  const dias = daysSince(r.fechaInicio);
+                  const c = ageColor(dias);
+                  return (
+                    <div key={r.id} style={{background:"#1e293b",borderLeft:"4px solid "+c.border,borderRadius:10,padding:"14px 18px",border:"1px solid #334155",borderLeftWidth:4,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+                      <div style={{background:c.bg,color:c.text,padding:"6px 12px",borderRadius:8,fontSize:13,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",minWidth:60,textAlign:"center"}}>{dias}d</div>
+                      <div style={{flex:1,minWidth:200}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
+                          <strong style={{color:"#e2e8f0",fontSize:14}}>{r.local}</strong>
+                          {r.caja && <span style={{color:"#64748b",fontSize:11,fontFamily:"'JetBrains Mono',monospace",background:"#0f172a",padding:"2px 8px",borderRadius:5}}>{r.caja}</span>}
+                          {r.nroReclamo && <span style={{color:"#a78bfa",fontSize:11,fontFamily:"'JetBrains Mono',monospace",background:"rgba(124,58,237,0.15)",padding:"2px 8px",borderRadius:5}}>#{r.nroReclamo}</span>}
+                        </div>
+                        <div style={{color:"#94a3b8",fontSize:13}}>{r.motivo}</div>
+                        <div style={{color:"#64748b",fontSize:11,marginTop:4,fontFamily:"'JetBrains Mono',monospace"}}>{r.fechaInicio} · Asignado: {r.asignadoShort || r.asignado}</div>
+                      </div>
+                      <button onClick={()=>setConfirmResolve(r)} style={{...S.btnSecondary,background:"rgba(34,197,94,0.15)",color:"#34d399"}}><I n="check" s={16} c="#34d399"/> Resolver</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {tab === "dashboard" && (
+            <>
+              {/* Filtros dashboard */}
+              <div style={{...S.card,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end",marginBottom:16}}>
+                <FG l="Local"><select value={dLocal} onChange={e=>setDLocal(e.target.value)} style={S.fInp}><option value="">Todos</option>{[...new Set(reclamosAll.map(r=>r.local).filter(Boolean))].sort().map(l=><option key={l} value={l}>{l}</option>)}</select></FG>
+                <FG l="Desde"><input type="date" value={dFrom} onChange={e=>setDFrom(e.target.value)} style={S.fInp}/></FG>
+                <FG l="Hasta"><input type="date" value={dTo} onChange={e=>setDTo(e.target.value)} style={S.fInp}/></FG>
+                {(dLocal||dFrom||dTo) && <button onClick={()=>{setDLocal("");setDFrom("");setDTo("");}} style={{...S.fInp,cursor:"pointer",background:"#1e293b",color:"#f87171",border:"1px solid #334155",padding:"6px 12px",marginTop:18}}>✕ Limpiar</button>}
+              </div>
+
+              {/* KPIs */}
+              <div style={S.kpiGrid}>
+                <KPI border="#7c3aed" label="Total Reclamos" value={dashData.length}/>
+                <KPI border="#d97706" label="En Progreso" value={totalEnProgreso}/>
+                <KPI border="#16a34a" label="Resueltos" value={totalResueltos}/>
+                <KPI border="#f59e0b" label="Local con más reclamos" value={localMasReclamos[0]?.nombre || "—"} valueSize={18} sub2={localMasReclamos[0] ? localMasReclamos[0].count + " reclamos" : ""}/>
+              </div>
+
+              {/* Top locales y motivos */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+                <div style={S.card}>
+                  <h3 style={S.cardTitle}>Top 10 Locales</h3>
+                  <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
+                    {localMasReclamos.length === 0 && <p style={{color:"#475569",fontSize:13}}>Sin datos</p>}
+                    {localMasReclamos.map((l,i) => (
+                      <div key={l.nombre} style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:22,height:22,borderRadius:6,background:i<3?"#d97706":"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:i<3?"#000":"#64748b",flexShrink:0}}>{i+1}</div>
+                        <div style={{width:110,fontSize:12,color:"#cbd5e1",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.nombre}</div>
+                        <div style={{flex:1,background:"#0f172a",borderRadius:6,height:22,position:"relative",overflow:"hidden"}}>
+                          <div style={{width:(l.count/maxLocal)*100+"%",height:"100%",background:"linear-gradient(90deg,#6d28d9,#a78bfa)",borderRadius:6,minWidth:l.count>0?18:0,transition:"width .6s ease"}}/>
+                          <span style={{position:"absolute",right:6,top:3,fontSize:10,fontWeight:700,color:"#fff"}}>{l.count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={S.card}>
+                  <h3 style={S.cardTitle}>Motivos más repetidos</h3>
+                  <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
+                    {motivoMasRepetido.length === 0 && <p style={{color:"#475569",fontSize:13}}>Sin datos</p>}
+                    {motivoMasRepetido.map((m,i) => (
+                      <div key={m.motivo} style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:22,height:22,borderRadius:6,background:i<3?"#d97706":"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:i<3?"#000":"#64748b",flexShrink:0}}>{i+1}</div>
+                        <div style={{width:150,fontSize:12,color:"#cbd5e1",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={m.motivo}>{m.motivo}</div>
+                        <div style={{flex:1,background:"#0f172a",borderRadius:6,height:22,position:"relative",overflow:"hidden"}}>
+                          <div style={{width:(m.count/maxMotivo)*100+"%",height:"100%",background:"linear-gradient(90deg,#b45309,#fbbf24)",borderRadius:6,minWidth:m.count>0?18:0,transition:"width .6s ease"}}/>
+                          <span style={{position:"absolute",right:6,top:3,fontSize:10,fontWeight:700,color:"#fff"}}>{m.count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Stats por técnico */}
+              {isAdmin && techStats.length > 0 && <div style={S.card}>
+                <h3 style={S.cardTitle}>Reclamos por Técnico</h3>
+                <div style={{display:"flex",gap:16,marginTop:14,flexWrap:"wrap"}}>
+                  {techStats.map(t => (
+                    <div key={t.nombre} style={{background:"#0f172a",borderRadius:12,padding:"14px 20px",textAlign:"center",minWidth:110}}>
+                      <div style={{width:44,height:44,borderRadius:"50%",background:"#7c3aed",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 6px",fontSize:18,fontWeight:700,color:"#fff"}}>{(t.nombre||"?")[0]}</div>
+                      <div style={{color:"#e2e8f0",fontSize:13,fontWeight:600}}>{t.nombre || "Sin asignar"}</div>
+                      <div style={{color:"#a78bfa",fontSize:26,fontWeight:800,marginTop:2}}>{t.count}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>}
+
+              {/* Lista detallada */}
+              <div style={{marginTop:16}}>
+                <h3 style={{...S.cardTitle,marginBottom:10}}>Reclamos del filtro ({dashData.length})</h3>
+                <div style={{...S.card,padding:0,overflow:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr>
+                      {["ESTADO","LOCAL","CAJA","MOTIVO","ASIGNADO","FECHA INICIO","RESOLUCIÓN","N°"].map(h=><th key={h} style={S.th}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {dashData.slice(0,100).map(r => (
+                        <tr key={r.id} style={{borderBottom:"1px solid rgba(51,65,85,0.4)"}}>
+                          <td style={S.td}><span style={{...S.badge,background:r.estado==="Resuelto"?"#16a34a":"#d97706"}}>{r.estado}</span></td>
+                          <td style={S.td}>{r.local}</td>
+                          <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.caja || "—"}</td>
+                          <td style={{...S.td,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.motivo}</td>
+                          <td style={S.td}>{r.asignadoShort || r.asignado}</td>
+                          <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.fechaInicio}</td>
+                          <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:r.fechaResolucion?"#34d399":"#475569"}}>{r.fechaResolucion || "—"}</td>
+                          <td style={{...S.td,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{r.nroReclamo || "—"}</td>
+                        </tr>
+                      ))}
+                      {dashData.length === 0 && <tr><td colSpan={8} style={{...S.td,textAlign:"center",color:"#475569",padding:40}}>Sin reclamos</td></tr>}
+                    </tbody>
+                  </table>
+                  {dashData.length > 100 && <div style={{padding:"12px 16px",color:"#64748b",fontSize:12,textAlign:"center",borderTop:"1px solid #334155"}}>Mostrando 100 de {dashData.length} · Ajustá los filtros para ver menos</div>}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Modal nuevo reclamo */}
+          {showNew && <NewReclamoModal api={api} locals={locals} user={user} onClose={()=>setShowNew(false)} onSuccess={()=>{onRefresh();setShowNew(false);showToast("Reclamo creado");}} showToast={showToast}/>}
+
+          {/* Confirmar resolver */}
+          {confirmResolve && <Modal onClose={()=>setConfirmResolve(null)}><div style={{textAlign:"center"}}>
+            <div style={{fontSize:44,marginBottom:14}}>✅</div>
+            <h3 style={{color:"#e2e8f0",marginBottom:6}}>¿Marcar como Resuelto?</h3>
+            <p style={{color:"#94a3b8",fontSize:13,marginBottom:8}}><strong>{confirmResolve.local}</strong> · {confirmResolve.motivo}</p>
+            <p style={{color:"#64748b",fontSize:12,marginBottom:20}}>Se registrará la fecha de resolución</p>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setConfirmResolve(null)} style={{...S.btnGhost,flex:1}}>Cancelar</button>
+              <button onClick={handleResolve} disabled={busy} style={{...S.btnPrimary,flex:1,background:"#16a34a"}}>{busy?"...":"Resolver"}</button>
+            </div>
+          </div></Modal>}
+        </div>
+      );
+    }
+
+    // ─── Nuevo Reclamo Modal ─────────────────────────────────
+    function NewReclamoModal({ api, locals, user, onClose, onSuccess, showToast }) {
+      const [form, setForm] = useState({ local: "", motivo: "", caja: "", nroReclamo: "" });
+      const [searchLocal, setSearchLocal] = useState("");
+      const [showDrop, setShowDrop] = useState(false);
+      const [busy, setBusy] = useState(false);
+
+      const fl = locals.filter(l => l.activo !== false && norm(l.nombre).includes(norm(searchLocal)));
+
+      const handleSubmit = async () => {
+        if (!form.local || !form.motivo) { showToast("Completá Local y Motivo","error"); return; }
+        setBusy(true);
+        try {
+          const res = await api.createReclamo(form, user.nombre);
+          if (res.success) onSuccess();
+          else showToast(res.error || "Error al crear","error");
+        } catch { showToast("Error de conexión","error"); }
+        setBusy(false);
+      };
+
+      return (
+        <Modal onClose={onClose}>
+          <h3 style={{color:"#e2e8f0",marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
+            <I n="card" s={20} c="#a78bfa"/> Nuevo Reclamo Posnet
+          </h3>
+
+          <div style={{marginBottom:14}}>
+            <label style={S.formLbl}>Local <span style={{color:"#f87171"}}>*</span></label>
+            <div style={{position:"relative"}}>
+              <input value={searchLocal} onChange={e=>{setSearchLocal(e.target.value);setShowDrop(true);setForm({...form,local:""});}}
+                onFocus={()=>setShowDrop(true)} onBlur={()=>setTimeout(()=>setShowDrop(false),200)}
+                placeholder="Buscar local..." style={S.inp}/>
+              {showDrop && searchLocal && <div style={S.dropdown}>
+                {fl.length===0 && <div style={S.ddItem}>No se encontraron</div>}
+                {fl.slice(0,6).map(l => <div key={l.id} style={S.ddItem} onMouseDown={()=>{setForm({...form,local:l.nombre});setSearchLocal(l.nombre);setShowDrop(false);}}>{l.nombre}</div>)}
+              </div>}
+            </div>
+            {form.local && <span style={{fontSize:12,color:"#34d399",marginTop:4,display:"inline-block"}}>✓ {form.local}</span>}
+          </div>
+
+          <div style={{marginBottom:14}}>
+            <label style={S.formLbl}>Motivo <span style={{color:"#f87171"}}>*</span></label>
+            <textarea value={form.motivo} onChange={e=>setForm({...form,motivo:e.target.value})} placeholder="Describí el reclamo..." rows={3} style={{...S.inp,resize:"vertical",minHeight:70}}/>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+            <div>
+              <label style={S.formLbl}>Caja <span style={{color:"#64748b",fontWeight:400}}>(opcional)</span></label>
+              <select value={form.caja} onChange={e=>setForm({...form,caja:e.target.value})} style={{...S.inp,fontSize:14,padding:"10px 13px"}}>
+                <option value="">—</option>
+                <option value="CAJA 1">CAJA 1</option>
+                <option value="CAJA 2">CAJA 2</option>
+                <option value="CAJA 3">CAJA 3</option>
+              </select>
+            </div>
+            <div>
+              <label style={S.formLbl}>N° Reclamo <span style={{color:"#64748b",fontWeight:400}}>(opcional)</span></label>
+              <input value={form.nroReclamo} onChange={e=>setForm({...form,nroReclamo:e.target.value})} placeholder="Ej: 12345" style={S.inp}/>
+            </div>
+          </div>
+
+          <div style={{marginBottom:18}}>
+            <div style={S.chip}><I n="users" s={14} c="#64748b"/> Asignado a: <strong style={{color:"#e2e8f0",marginLeft:4}}>{user.nombre}</strong></div>
+          </div>
+
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={onClose} style={{...S.btnGhost,flex:1}}>Cancelar</button>
+            <button onClick={handleSubmit} disabled={busy} style={{...S.btnPrimary,flex:1}}>{busy ? "Creando..." : "✓ Crear Reclamo"}</button>
+          </div>
+        </Modal>
+      );
     }
 
     // ─── Change Password Modal ─────────────────────────────
